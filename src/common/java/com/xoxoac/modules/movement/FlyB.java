@@ -11,8 +11,8 @@ public final class FlyB implements MovementCheck {
 
     @Override
     public String check(Player player, MovementContext context) {
-        // Riptide can momentarily desync packet states, so we bypass it here as well
-        if (player.isRiptiding()) {
+        // Riptide and spear-Lunge dashes can momentarily desync packet states, so we bypass here too
+        if (player.isRiptiding() || context.boosted()) {
             return null;
         }
 

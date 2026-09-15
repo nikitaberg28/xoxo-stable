@@ -1,5 +1,8 @@
 package com.xoxoac;
 
+import com.xoxoac.config.Messages;
+import com.xoxoac.config.ModuleTuning;
+import com.xoxoac.gui.SuspectGui;
 import com.xoxoac.modules.ViolationManager;
 import org.bukkit.Bukkit;
 import org.bukkit.command.Command;
@@ -7,163 +10,143 @@ import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
 import org.bukkit.command.TabCompleter;
 import org.bukkit.entity.Player;
+import org.bukkit.plugin.Plugin;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.List;
 
+/**
+ * Deliberately small: only the three commands the server owner actually wants are here.
+ *   /xoxo check   — opens the suspects GUI (see SuspectGui) instead of a text list in chat.
+ *   /xoxo reload  — reloads config.yml. Operator only (isOp()), no separate admin permission.
+ *   /xoxo alert   — toggles a staff member's own live flag-alert feed. A player toggles their
+ *                   own chat feed; run from console it toggles whether flags are written to the
+ *                   server console log at all. This replaces the old, broken "alerts" command —
+ *                   the previous implementation conflated "is a player" with "should go to chat",
+ *                   which is exactly why it never routed correctly.
+ *   /xoxo unvanish — clears the AC-granted spectate invisibility from the suspects GUI (the same
+ *                   effect a milk bucket clears). Helper or operator only.
+ *
+ * Permissions are LuckPerms-managed nodes, not an in-plugin list:
+ *   xoxoac.bypass — full anticheat bypass for the holder (checked directly in ViolationManager).
+ *   xoxoac.helper — access to /xoxo check and /xoxo alert.
+ * /xoxo reload remains operator-only regardless of these nodes.
+ */
 public class XoxoCommand implements CommandExecutor, TabCompleter {
 
-    private final ViolationManager violationManager;
+    private static final String PERM_HELPER = "xoxoac.helper";
 
-    public XoxoCommand(ViolationManager violationManager) {
+    private final Plugin plugin;
+    private final ViolationManager violationManager;
+    private final ModuleTuning moduleTuning;
+    private final Messages messages;
+    private final SuspectGui suspectGui;
+
+    public XoxoCommand(Plugin plugin, ViolationManager violationManager,
+                        ModuleTuning moduleTuning, Messages messages, SuspectGui suspectGui) {
+        this.plugin = plugin;
         this.violationManager = violationManager;
+        this.moduleTuning = moduleTuning;
+        this.messages = messages;
+        this.suspectGui = suspectGui;
     }
 
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
-        if (!sender.isOp()) {
-            sender.sendMessage("§cYou do not have permission to use this command.");
-            return true;
-        }
-
         if (args.length == 0) {
             sendHelp(sender);
             return true;
         }
 
         switch (args[0].toLowerCase()) {
-            case "help"        -> sendHelp(sender);
-            case "exceptions"  -> handleExceptions(sender, args);
-            case "violations"  -> handleViolations(sender, args);
-            case "alerts"      -> handleAlerts(sender);
-            default            -> sendHelp(sender);
+            case "check"    -> handleCheck(sender);
+            case "reload"   -> handleReload(sender);
+            case "alert"    -> handleAlert(sender, args);
+            case "unvanish" -> handleUnvanish(sender);
+            default         -> sendHelp(sender);
         }
 
         return true;
     }
 
-    // ── /xoxo exceptions ─────────────────────────────────────────────────────
-
-    private void handleExceptions(CommandSender sender, String[] args) {
-        if (args.length < 2) {
-            sender.sendMessage("§eUsage: §f/xoxo exceptions <add|get|remove> [player]");
-            return;
-        }
-
-        switch (args[1].toLowerCase()) {
-
-            case "get" -> {
-                Set<UUID> exceptions = violationManager.getExceptions();
-                if (exceptions.isEmpty()) {
-                    sender.sendMessage("§7No players are currently excepted from xoxo-AntiCheat.");
-                    return;
-                }
-                sender.sendMessage("§d§l[xoxo-AC] §7Excepted players:");
-                for (UUID uuid : exceptions) {
-                    Player online = Bukkit.getPlayer(uuid);
-                    String name = online != null ? online.getName()
-                            : Bukkit.getOfflinePlayer(uuid).getName();
-                    sender.sendMessage("  §8- §f" + (name != null ? name : uuid));
-                }
-            }
-
-            case "add" -> {
-                if (args.length < 3) { sender.sendMessage("§eUsage: §f/xoxo exceptions add <player>"); return; }
-                Player target = Bukkit.getPlayerExact(args[2]);
-                if (target == null) { sender.sendMessage("§cPlayer §f" + args[2] + " §cis not online."); return; }
-                if (violationManager.isExcepted(target.getUniqueId())) {
-                    sender.sendMessage("§f" + target.getName() + " §cis already excepted.");
-                    return;
-                }
-                violationManager.addException(target.getUniqueId());
-                sender.sendMessage("§d§l[xoxo-AC] §f" + target.getName() + " §7→ §aadded §7to exceptions.");
-            }
-
-            case "remove" -> {
-                if (args.length < 3) { sender.sendMessage("§eUsage: §f/xoxo exceptions remove <player>"); return; }
-                String targetName = args[2];
-                UUID targetUUID = null;
-
-                Player online = Bukkit.getPlayerExact(targetName);
-                if (online != null) {
-                    targetUUID = online.getUniqueId();
-                } else {
-                    for (UUID uuid : violationManager.getExceptions()) {
-                        String offlineName = Bukkit.getOfflinePlayer(uuid).getName();
-                        if (targetName.equalsIgnoreCase(offlineName)) {
-                            targetUUID = uuid;
-                            break;
-                        }
-                    }
-                }
-
-                if (targetUUID == null || !violationManager.isExcepted(targetUUID)) {
-                    sender.sendMessage("§cNo excepted player found: §f" + targetName);
-                    return;
-                }
-                violationManager.removeException(targetUUID);
-                sender.sendMessage("§d§l[xoxo-AC] §f" + targetName + " §7→ §cremoved §7from exceptions.");
-            }
-
-            default -> sender.sendMessage("§eUsage: §f/xoxo exceptions <add|get|remove> [player]");
-        }
+    private boolean requireHelperOrOp(CommandSender sender) {
+        if (sender.hasPermission(PERM_HELPER) || sender.isOp()) return true;
+        sender.sendMessage(messages.prefixed("no-permission"));
+        return false;
     }
 
-    // ── /xoxo violations <player> ─────────────────────────────────────────────
+    // ── /xoxo check ───────────────────────────────────────────────────────────
 
-    private void handleViolations(CommandSender sender, String[] args) {
-        if (args.length < 2) {
-            sender.sendMessage("§eUsage: §f/xoxo violations <player>");
-            return;
-        }
-
-        Player target = Bukkit.getPlayerExact(args[1]);
-        if (target == null) {
-            sender.sendMessage("§cPlayer §f" + args[1] + " §cis not online.");
-            return;
-        }
-
-        Map<String, Integer> vlMap = violationManager.getViolationMap(target.getUniqueId());
-        if (vlMap.isEmpty()) {
-            sender.sendMessage("§d§l[xoxo-AC] §f" + target.getName() + " §7has no active violations.");
-            return;
-        }
-
-        sender.sendMessage("§d§l[xoxo-AC] §7Violations — §f" + target.getName() + "§7:");
-        vlMap.entrySet().stream()
-                .filter(e -> e.getValue() > 0)
-                .sorted(Map.Entry.<String, Integer>comparingByValue().reversed())
-                .forEach(e -> {
-                    int    vl  = e.getValue();
-                    String bar = "§a";
-                    if (vl >= 25) bar = "§c";
-                    else if (vl >= 10) bar = "§e";
-                    sender.sendMessage("  §8▸ §e" + e.getKey()
-                            + " §8— " + bar + "VL " + vl + " §8/ §740");
-                });
-    }
-
-    // ── /xoxo alerts ──────────────────────────────────────────────────────────
-
-    private void handleAlerts(CommandSender sender) {
+    private void handleCheck(CommandSender sender) {
+        if (!requireHelperOrOp(sender)) return;
         if (!(sender instanceof Player player)) {
-            sender.sendMessage("§cOnly in-game staff can toggle alerts.");
+            sender.sendMessage(messages.prefixed("alert-console"));
             return;
         }
+        suspectGui.open(player);
+    }
+
+    // ── /xoxo reload — operator only ────────────────────────────────────────
+
+    private void handleReload(CommandSender sender) {
+        if (!sender.isOp() && !(sender instanceof org.bukkit.command.ConsoleCommandSender)) {
+            sender.sendMessage(messages.prefixed("no-permission"));
+            return;
+        }
+        plugin.reloadConfig();
+        moduleTuning.reload();
+        messages.reload();
+        sender.sendMessage(messages.prefixed("reload-success"));
+    }
+
+    // ── /xoxo alert [console] ────────────────────────────────────────────────
+
+    private void handleAlert(CommandSender sender, String[] args) {
+        if (!requireHelperOrOp(sender)) return;
+
+        // Run from the console: toggles whether flags get written to the server console log at
+        // all (independent of any individual staff member's own chat feed below).
+        if (!(sender instanceof Player)) {
+            boolean nowEnabled = violationManager.toggleConsoleLogging();
+            sender.sendMessage(nowEnabled
+                    ? messages.prefixed("alert-console-enabled")
+                    : messages.prefixed("alert-console-disabled"));
+            return;
+        }
+
+        Player player = (Player) sender;
         boolean nowMuted = violationManager.toggleAlertMute(player.getUniqueId());
         player.sendMessage(nowMuted
-                ? "§d§l[xoxo-AC] §7Flag alerts §cmuted§7. Use §f/xoxo alerts §7to re-enable."
-                : "§d§l[xoxo-AC] §7Flag alerts §aenabled§7.");
+                ? messages.prefixed("alert-muted")
+                : messages.prefixed("alert-enabled"));
+    }
+
+    // ── /xoxo unvanish ────────────────────────────────────────────────────────
+
+    private void handleUnvanish(CommandSender sender) {
+        if (!requireHelperOrOp(sender)) return;
+        if (!(sender instanceof Player player)) {
+            sender.sendMessage(messages.prefixed("alert-console"));
+            return;
+        }
+        boolean cleared = suspectGui.clearVanish(player);
+        player.sendMessage(cleared
+                ? messages.prefixed("unvanish-cleared")
+                : messages.prefixed("unvanish-not-active"));
     }
 
     // ── Help ──────────────────────────────────────────────────────────────────
 
     private void sendHelp(CommandSender sender) {
-        sender.sendMessage("§d§l[xoxo-AntiCheat] §7Commands:");
-        sender.sendMessage("  §f/xoxo exceptions add §8<player>    §7— Exempt a player from all checks");
-        sender.sendMessage("  §f/xoxo exceptions remove §8<player> §7— Remove exemption");
-        sender.sendMessage("  §f/xoxo exceptions get               §7— List all excepted players");
-        sender.sendMessage("  §f/xoxo violations §8<player>        §7— View active violation levels");
-        sender.sendMessage("  §f/xoxo alerts                       §7— Toggle your flag alert feed");
+        sender.sendMessage(messages.prefixed("help-header"));
+        if (sender.hasPermission(PERM_HELPER) || sender.isOp()) {
+            sender.sendMessage("  §f/xoxo check       §7— Открыть GUI со списком нарушителей");
+            sender.sendMessage("  §f/xoxo alert       §7— Переключить свою ленту оповещений о флагах");
+            sender.sendMessage("  §f/xoxo unvanish    §7— Снять невидимость, выданную GUI проверки");
+        }
+        if (sender.isOp()) {
+            sender.sendMessage("  §f/xoxo reload      §7— Перезагрузить конфигурацию");
+        }
     }
 
     // ── Tab Completion ────────────────────────────────────────────────────────
@@ -171,32 +154,13 @@ public class XoxoCommand implements CommandExecutor, TabCompleter {
     @Override
     public List<String> onTabComplete(CommandSender sender, Command command, String label, String[] args) {
         List<String> suggestions = new ArrayList<>();
-        if (!sender.isOp()) return suggestions;
+        boolean helper = sender.hasPermission(PERM_HELPER) || sender.isOp();
 
         if (args.length == 1) {
-            suggestions.addAll(List.of("help", "exceptions", "violations", "alerts"));
-
-        } else if (args.length == 2) {
-            switch (args[0].toLowerCase()) {
-                case "exceptions" -> suggestions.addAll(List.of("add", "get", "remove"));
-                case "violations" -> Bukkit.getOnlinePlayers().forEach(p -> suggestions.add(p.getName()));
-            }
-
-        } else if (args.length == 3 && args[0].equalsIgnoreCase("exceptions")) {
-            switch (args[1].toLowerCase()) {
-                case "add" -> {
-                    for (Player p : Bukkit.getOnlinePlayers()) {
-                        if (!violationManager.isExcepted(p.getUniqueId())) suggestions.add(p.getName());
-                    }
-                }
-                case "remove" -> {
-                    for (UUID uuid : violationManager.getExceptions()) {
-                        Player p    = Bukkit.getPlayer(uuid);
-                        String name = p != null ? p.getName() : Bukkit.getOfflinePlayer(uuid).getName();
-                        if (name != null) suggestions.add(name);
-                    }
-                }
-            }
+            if (helper) suggestions.addAll(List.of("check", "alert", "unvanish"));
+            if (sender.isOp()) suggestions.add("reload");
+        } else if (args.length == 2 && "alert".equalsIgnoreCase(args[0]) && sender.isOp()) {
+            suggestions.add("console");
         }
 
         String typed = args[args.length - 1].toLowerCase();

@@ -16,6 +16,7 @@ public final class MovementContext {
     private final int airTicks;
     private final double currentVelocityY;
     private final double naturalJumpVelocity;
+    private final boolean boosted;
 
     private MovementContext(
             Location from,
@@ -25,7 +26,8 @@ public final class MovementContext {
             boolean onLiquid,
             int airTicks,
             double currentVelocityY,
-            double naturalJumpVelocity
+            double naturalJumpVelocity,
+            boolean boosted
     ) {
         this.from = from.clone();
         this.to = to.clone();
@@ -37,6 +39,7 @@ public final class MovementContext {
         this.airTicks = airTicks;
         this.currentVelocityY = currentVelocityY;
         this.naturalJumpVelocity = naturalJumpVelocity;
+        this.boosted = boosted;
     }
 
     public static MovementContext from(
@@ -48,7 +51,8 @@ public final class MovementContext {
             boolean onLiquid,
             int airTicks,
             double currentVelocityY,
-            double naturalJumpVelocity
+            double naturalJumpVelocity,
+            boolean boosted
     ) {
         return new MovementContext(
                 from,
@@ -58,8 +62,14 @@ public final class MovementContext {
                 onLiquid,
                 airTicks,
                 currentVelocityY,
-                naturalJumpVelocity
+                naturalJumpVelocity,
+                boosted
         );
+    }
+
+    /** True if this tick's motion looks like a legitimate Riptide or spear-Lunge dash burst. */
+    public boolean boosted() {
+        return boosted;
     }
 
     public static double naturalJumpVelocity(Player player) {

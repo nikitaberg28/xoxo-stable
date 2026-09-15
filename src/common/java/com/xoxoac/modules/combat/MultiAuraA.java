@@ -11,6 +11,11 @@ import java.util.UUID;
 
 public final class MultiAuraA implements CombatCheck {
 
+    // Deliberately PvP-only (see CombatCheck#appliesToMobs default) — this exists to catch
+    // killaura swapping between multiple PLAYER targets rapidly. Hitting 3+ different mobs in
+    // 1.5s is completely ordinary AoE/farm combat (a mob farm, a crowd of hostiles at night) and
+    // must never trip this, which is exactly the false-positive the server owner's own farm-mob
+    // reproduction test surfaced.
     private static final long KA_WINDOW_MS = 1500L;
     private static final int KA_TARGETS = 3;
 

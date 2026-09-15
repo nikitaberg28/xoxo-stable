@@ -3,15 +3,20 @@ version: '1.0.4'
 main: com.xoxoac.XoxoAnticheat
 api-version: '1.21'
 author: xoxo-AntiCheat Team
-description: A highly optimised AntiCheat with Tick Flags, Violation Levels, auto Ban and exception List
+description: Bedrock-friendly AntiCheat with a suspects GUI, violation levels and repeat-offense IP bans
 
 commands:
   xoxo:
     description: Main Anticheat Command
-    permission: xoxoac.admin
-    usage: /xoxo <help|exceptions|violations|alerts>
+    usage: /xoxo <check|reload|alert|unvanish>
 
 permissions:
-  xoxoac.admin:
-    description: Full acces to the Plugin
-    default: op
+  xoxoac.bypass:
+    description: Full anticheat bypass for the holder — no checks ever run against them. Grant via LuckPerms.
+    default: false
+  xoxoac.softbypass:
+    description: Detection, VL tracking and staff alerts still run normally, but automatic kick/ban punishment is suppressed and logged instead. Intended for trusted staff. Grant via LuckPerms.
+    default: false
+  xoxoac.helper:
+    description: Access to /xoxo check (suspects GUI) and /xoxo alert. Grant via LuckPerms.
+    default: false
